@@ -4,8 +4,7 @@
 # Last Modified On : 27-05-2018 
 # Version          : 1.0
 #
-# Description      :
-# Opis
+# Description      : Search for Ryanair's flights. Gives an option to search flight in any direction.
 #
 # Licensed under GPL (see /usr/share/common-licenses/GPL for more details
 # or contact # the Free Software Foundation for a copy)

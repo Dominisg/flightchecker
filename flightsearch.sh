@@ -2,6 +2,27 @@
 source "secret"
 
 #collecting resources
+help()
+{
+ echo "Options :"
+ echo "-h           - help "
+ echo "-v           - version "
+}
+
+
+while getopts hv CHOICE 2>/dev/null ; do
+	case $CHOICE in
+	    h) help
+	       exit;;
+	    v) cat ./header
+	       exit;;
+	    ?) echo "Nieprawidłowa opcja, wpisz -h w celu uzyskania pomocy."
+	       exit;;
+	esac
+    done
+
+###intro
+
 
 f_collect_resources() {
     if [ ! -f ./routes.json ]; then
@@ -161,11 +182,12 @@ fi
 
 f_main()
 {
-f_collect_resources
-f_askfrom
-f_askdir
-f_calendarform
-f_search
+    intro
+    f_collect_resources
+    f_askfrom
+    f_askdir
+    f_calendarform
+    f_search
 }
 
 f_main
