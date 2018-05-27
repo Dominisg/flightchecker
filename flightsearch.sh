@@ -19,7 +19,6 @@ f_collect_resources() {
 
     readarray -t COUNTRIES_NAME < <(cat countries.json | jq -r '.[] | .name')
     readarray -t COUNTREIS_CODE < <(cat countries.json | jq -r '.[] | .code')
-
 }
 
 
@@ -34,10 +33,7 @@ f_askfrom(){
      if [[ -z $RESPONSE ]] ; then
        exit
     fi
-
     readarray -t CITIES_NAME < <(cat ./cities.json | jq -r ".[] | select(.countryCode==\"$CTRCODE\") | .code")
-
-    echo ${CITIES_NAME[@]}
 
     if [[ ${#CITIES_NAME[@]} > 1 ]]; then
         RESPONSE=`zenity --list --column "city" --title "From" --text "Pick city" "${CITIES_NAME[@]}"`
@@ -51,7 +47,7 @@ f_askfrom(){
 
 
     if [[ ${#AIRPORTS_NAME[@]} > 1 ]]; then
-        RESPONSE=`zenity --entry --title "From" --text "Airport" "${AIRPORTS_NAME[@]}"`
+        RESPONSE=`zenity --list -column "airport" --title "From" --text "Airport" "${AIRPORTS_NAME[@]}"`
         for (( i=0; $i <= ${#AIRPORTS_NAME[@]}; i++ )); do
             if [[ ${AIRPORTS_NAME[i]} == $RESPONSE ]];then
                 RESPONSE=${AIRPORTS_IATA[i]}
@@ -70,7 +66,6 @@ f_askdir(){
        exit
     fi
     readarray -t AIRPORTS_IATA < <(curl "http://apigateway.ryanair.com/pub/v1/core/3/routes/$FROM/iataCodes?apikey=$KEY" | jq -r ".[] | .")
-    curl "http://apigateway.ryanair.com/pub/v1/core/3/routes/$FROM/iataCodes?apikey=$KEY"
     unset $AIRPORTS_NAME
     for (( i=0 ,j=0; $i < ${#AIRPORTS_IATA[@]}; i++ ,j++ )); do
         AIRPORTS_NAME[$j]=`cat ./airports.json | jq -r ".[] | select(.iataCode==\"${AIRPORTS_IATA[$i]}\") | .name"`
@@ -79,22 +74,22 @@ f_askdir(){
         fi
     done
     echo $AIRPORTS_NAME
- if [[ ${#AIRPORTS_NAME[@]} > 1 ]]; then
-    TO=`zenity --list --title "To" --column "Name" --text "Pick airport:" "ANY" "${AIRPORTS_NAME[@]}"`
- else
-    TO=${AIRPORTS_NAME[0]}
-    zenity --info --text "The only direction you can fly is $TO"
- fi
+    if [[ ${#AIRPORTS_NAME[@]} > 1 ]]; then
+        TO=`zenity --list --title "To" --column "Name" --text "Pick airport:" "ANY" "${AIRPORTS_NAME[@]}"`
+    else
+        TO=${AIRPORTS_NAME[0]}
+        zenity --info --text "The only direction you can fly is $TO"
+    fi
 
     if [ $TO != "ANY" ]; then
-   TO=`cat ./airports.json | jq -r ".[] | select(.name==\"$TO\") | .iataCode"`
-   fi
+        TO=`cat ./airports.json | jq -r ".[] | select(.name==\"$TO\") | .iataCode"`
+    fi
 }
 #RESUlT IN $TO. Use func always after f_askfrom
 
 f_calendarform()
 {
-     if [[ -z $TO  ]] ; then
+    if [[ -z $TO  ]] ; then
        exit
     fi
     GODATE=`zenity --forms --title="Input your flight date" --text="Your flight date" \
@@ -104,44 +99,76 @@ f_calendarform()
     --add-calendar="Arrival date"`\
     BACKDATE=`echo $BACKDATE | sed -r  's/([0-9]{2})\.([0-9]{2})\.([0-9]{4})/\3-\2-\1/g'`
     if [ $TO != "ANY" ];then
-     TOLERANCY=`zenity --list  --radiolist --column 'Select...' --column  'How close to date' FALSE 'Exactly' FALSE 'Week' FALSE 'Month'`
+        TOLERANCY=`zenity --list  --radiolist --column 'Select...' --column  'How close to date' FALSE 'Exactly' FALSE 'Week' FALSE 'Month'`
     fi
 }
 #Result in $GODATE ,$BACKDATE and $TOLERANCY
 
-f_search()
+
+f_present_exactly_result()
 {
-RESPONSE=`mktemp`
+    readarray -t WHERE < <(cat $RESPONSE | jq -r ".fares[].outbound | .arrivalAirport.name")
+    readarray -t OUT_DAY < <(cat $RESPONSE | jq -r ".fares[].outbound | .departureDate")
+    readarray -t OUT_PRICE < <(cat $RESPONSE | jq -r ".fares[].outbound | .price.value")
+    readarray -t IN_DAY < <(cat $RESPONSE | jq -r ".fares[].inbound | .departureDate")
+    readarray -t IN_PRICE < <(cat $RESPONSE | jq -r ".fares[].inbound | .price.value")
 
-RESPONSE="odpowiedz2.json"
-if [ $TO == "ANY" ]; then
-    curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares?apikey=$KEY&departureAirportIataCode=$FROM&outboundDepartureDateFrom=$GODATE&outboundDepartureDateTo=$GODATE&inboundDepartureDateFrom=$BACKDATE&inboundDepartureDateTo=$BACKDATE&currency=PLN" > $RESPONSE
-elif [ $TOLERANCY == "Exactly" ]; then
-    curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares?apikey=$KEY&departureAirportIataCode=$FROM&arrivalAirportIataCode=$TO&outboundDepartureDateFrom=$GODATE&outboundDepartureDateTo=$GODATE&inboundDepartureDateFrom=$BACKDATE&inboundDepartureDateTo=$BACKDATE&currency=PLN"  > $RESPONSE
-else
-    curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares/$FROM/$TO/cheapestPerDay?apikey=$KEY&currency=PLN&outbound${TOLERANCY}OfDate=$GODATE&inbound${TOLERANCY}OfDate=$BACKDATE"  > $RESPONSE
-fi
+    for (( i=0; $i < ${#OUT_PRICE[@]}; i++ )); do
+        echo "<h1> ${WHERE[$i]} </h1>" >> $SEARCH
+        echo "-> ${OUT_DAY[$i]} ${OUT_PRICE[$i]} zł <br/>" >>$SEARCH
+        echo "<- ${IN_DAY[$i]} ${IN_PRICE[$i]} zł <br/>" >>$SEARCH
+    done
+    zenity --text-info --html --height=400 --width=700  --filename=$SEARCH
+}
 
+f_present_result()
+{
+    readarray -t OUT_PRICES_PLN < <(cat $RESPONSE | jq -r ".outbound.fares[] | select(.unavailable==false) | .price.value")
+    readarray -t OUT_DAY< <(cat $RESPONSE  | jq -r ".outbound.fares[] | select(.unavailable==false) | .day")
+    readarray -t IN_PRICES_PLN < <(cat $RESPONSE  | jq -r ".inbound.fares[] | select(.unavailable==false) | .price.value")
+    readarray -t IN_DAY< <(cat $RESPONSE  | jq -r ".inbound.fares[] | select(.unavailable==false) | .day")
 
-
+    echo "<h1>$FROM -> $TO</h1>" >> $SEARCH
+    for (( i=0; $i < ${#OUT_PRICES_PLN[@]}; i++ )); do
+        echo "${OUT_DAY[$i]} ${OUT_PRICES_PLN[$i]} zł <br/>" >> $SEARCH
+    done
+    echo "<h1>$TO -> $FROM </h1>" >> $SEARCH
+    for (( i=0; $i < ${#IN_PRICES_PLN[@]}; i++ )); do
+        echo "${IN_DAY[$i]}  ${IN_PRICES_PLN[$i]} zł <br/> " >> $SEARCH
+    done
+    zenity --text-info --html --height=400 --width=700 --filename=$SEARCH
 }
 
 
+f_search()
+{
+RESPONSE=`mktemp`
+SEARCH=`mktemp`
 
+if [ $TO == "ANY" ]; then
+    curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares?apikey=$KEY&departureAirportIataCode=$FROM&outboundDepartureDateFrom=$GODATE&outboundDepartureDateTo=$GODATE&inboundDepartureDateFrom=$BACKDATE&inboundDepartureDateTo=$BACKDATE&currency=PLN" > $RESPONSE
+    f_present_exactly_result
+    return
+elif [ $TOLERANCY == "Exactly" ]; then
+    curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares?apikey=$KEY&departureAirportIataCode=$FROM&arrivalAirportIataCode=$TO&outboundDepartureDateFrom=$GODATE&outboundDepartureDateTo=$GODATE&inboundDepartureDateFrom=$BACKDATE&inboundDepartureDateTo=$BACKDATE&currency=PLN" > $RESPONSE
+    f_present_exactly_result
+    rerurn
+else
+    curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares/$FROM/$TO/cheapestPerDay?apikey=$KEY&currency=PLN&outbound${TOLERANCY}OfDate=$GODATE&inbound${TOLERANCY}OfDate=$BACKDATE"  > $RESPONSE
+    f_present_result
+fi
+}
+
+f_main()
+{
 f_collect_resources
 f_askfrom
 f_askdir
 f_calendarform
 f_search
-echo $DATE
+}
 
-
-
-
-
-
-
-
+f_main
 
 
 
