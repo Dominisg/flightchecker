@@ -1,22 +1,37 @@
 #!/bin/bash
 source "secret"
 
-#collecting resources
 help()
 {
  echo "Options :"
  echo "-h           - help "
  echo "-v           - version "
+ echo "-a           - sends saved alert request, and display notification in case of price change"
 }
 
+f_alert_request()
+{
+RESPONSE=`mktemp`
+source "./alert"
+curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares?apikey=$KEY&departureAirportIataCode=$FROM&arrivalAirportIataCode=$TO&outboundDepartureDateFrom=$GODATE&outboundDepartureDateTo=$GODATE&inboundDepartureDateFrom=$BACKDATE&inboundDepartureDateTo=$BACKDATE&currency=PLN" > $RESPONSE
 
-while getopts hv CHOICE 2>/dev/null ; do
+    readarray -t OUT_PRICE < <(cat $RESPONSE | jq -r ".fares[].outbound | .price.value")
+    readarray -t IN_PRICE < <(cat $RESPONSE | jq -r ".fares[].inbound | .price.value")
+
+    if [ $OUT_PRICE != $OLD_OUT_PRICE  ] || [ $IN_PRICE != $OLD_IN_PRICE  ]; then
+    zenity zenity --notification  --text="Price $FROM -> $TO has changed.\n Now its $FROM -> $OUT_PRICE zł. and $FROM <- $IN_PRICE zł."
+    fi
+}
+
+while getopts hva CHOICE 2>/dev/null ; do
 	case $CHOICE in
+	    a) f_alert_request
+	       exit;;
 	    h) help
 	       exit;;
 	    v) cat ./header
 	       exit;;
-	    ?) echo "Nieprawidłowa opcja, wpisz -h w celu uzyskania pomocy."
+	    ?) echo "Wrong option, write -h for help."
 	       exit;;
 	esac
     done
@@ -68,7 +83,7 @@ f_askfrom(){
 
 
     if [[ ${#AIRPORTS_NAME[@]} > 1 ]]; then
-        RESPONSE=`zenity --list -column "airport" --title "From" --text "Airport" "${AIRPORTS_NAME[@]}"`
+        RESPONSE=`zenity --list --column "airport" --title "From" --text "Airport" "${AIRPORTS_NAME[@]}"`
         for (( i=0; $i <= ${#AIRPORTS_NAME[@]}; i++ )); do
             if [[ ${AIRPORTS_NAME[i]} == $RESPONSE ]];then
                 RESPONSE=${AIRPORTS_IATA[i]}
@@ -94,7 +109,6 @@ f_askdir(){
             j=$j-1                                                                               #czasami przychodzi iataCode którego nie ma na liście lotnisk;/ Dzieki ryanair
         fi
     done
-    echo $AIRPORTS_NAME
     if [[ ${#AIRPORTS_NAME[@]} > 1 ]]; then
         TO=`zenity --list --title "To" --column "Name" --text "Pick airport:" "ANY" "${AIRPORTS_NAME[@]}"`
     else
@@ -116,9 +130,19 @@ f_calendarform()
     GODATE=`zenity --forms --title="Input your flight date" --text="Your flight date" \
     --add-calendar="Departure date"`\
     GODATE=`echo $GODATE | sed -r  's/([0-9]{2})\.([0-9]{2})\.([0-9]{4})/\3-\2-\1/g'`
+
+    if [[ -z $GODATE  ]] ; then
+       exit
+    fi
+
     BACKDATE=`zenity --forms --title="Input your flight date" --text="Your flight date" \
     --add-calendar="Arrival date"`\
     BACKDATE=`echo $BACKDATE | sed -r  's/([0-9]{2})\.([0-9]{2})\.([0-9]{4})/\3-\2-\1/g'`
+
+    if [[ -z $BACKDATE  ]] ; then
+       exit
+    fi
+
     if [ $TO != "ANY" ];then
         TOLERANCY=`zenity --list  --radiolist --column 'Select...' --column  'How close to date' FALSE 'Exactly' FALSE 'Week' FALSE 'Month'`
     fi
@@ -128,6 +152,7 @@ f_calendarform()
 
 f_present_exactly_result()
 {
+
     readarray -t WHERE < <(cat $RESPONSE | jq -r ".fares[].outbound | .arrivalAirport.name")
     readarray -t OUT_DAY < <(cat $RESPONSE | jq -r ".fares[].outbound | .departureDate")
     readarray -t OUT_PRICE < <(cat $RESPONSE | jq -r ".fares[].outbound | .price.value")
@@ -169,20 +194,35 @@ SEARCH=`mktemp`
 if [ $TO == "ANY" ]; then
     curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares?apikey=$KEY&departureAirportIataCode=$FROM&outboundDepartureDateFrom=$GODATE&outboundDepartureDateTo=$GODATE&inboundDepartureDateFrom=$BACKDATE&inboundDepartureDateTo=$BACKDATE&currency=PLN" > $RESPONSE
     f_present_exactly_result
-    return
 elif [ $TOLERANCY == "Exactly" ]; then
     curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares?apikey=$KEY&departureAirportIataCode=$FROM&arrivalAirportIataCode=$TO&outboundDepartureDateFrom=$GODATE&outboundDepartureDateTo=$GODATE&inboundDepartureDateFrom=$BACKDATE&inboundDepartureDateTo=$BACKDATE&currency=PLN" > $RESPONSE
     f_present_exactly_result
-    rerurn
+    f_create_alert
 else
     curl -X GET "http://apigateway.ryanair.com/pub/v1/farefinder/3/roundTripFares/$FROM/$TO/cheapestPerDay?apikey=$KEY&currency=PLN&outbound${TOLERANCY}OfDate=$GODATE&inbound${TOLERANCY}OfDate=$BACKDATE"  > $RESPONSE
     f_present_result
 fi
 }
 
+f_create_alert()
+{
+`zenity --question --text="Would you like to create price alert for this flight?"`
+if [ $? == 1 ]; then
+return
+fi
+
+echo 'FROM''='$FROM > "./alert"
+echo 'TO''='$TO >> "./alert"
+echo 'GODATE''='$GODATE >> "./alert"
+echo 'BACKDATE''='$BACKDATE >> "./alert"
+echo 'OLD_OUT_PRICE''='$OUT_PRICE >> "./alert"
+echo 'OLD_IN_PRICE''='$IN_PRICE >> "./alert"
+
+(crontab -l 2>/dev/null; echo "11 12,15,18 * * * $(pwd)$0 -a") | crontab -
+}
+
 f_main()
 {
-    intro
     f_collect_resources
     f_askfrom
     f_askdir
@@ -191,7 +231,3 @@ f_main()
 }
 
 f_main
-
-
-
-
